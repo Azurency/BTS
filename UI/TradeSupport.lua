@@ -100,8 +100,9 @@ function BuildTotalGraph()
     local traderCanEmbark = PlayerHasTraderEmbarkTech(pPlayer)
     print("trader embark:", traderCanEmbark)
 
-    local routeGraph = Graph:new()
-    local failedRouteGraph = Graph:new()
+    local routeGraph = Graph:new()          -- stores only the gauranteed routes, no path plots
+    local simpleRouteGraph = Graph:new()    -- stores any non-refuel routes
+    local failedRouteGraph = Graph:new()    -- stores routes that failed
 
     -- short cache for simple checks
     local cityEmbarkInfo = {}
@@ -151,25 +152,25 @@ function BuildTotalGraph()
                         -- proceed with check if and only if
                         -- 1. not the same city
                         -- 2. both cities are revealed
-                        -- 2. does not exist in graphs
-                        -- 3. origin city is owned by local player or source has a trading post
+                        -- 3. is not one vertex connection in both graphs
+                        -- 4. origin city is owned by local player or source has a trading post
                         if (sKey ~= dKey and
                                 (cityRevealInfo[sKey] and cityRevealInfo[dKey]) and
-                                (not routeGraph:HasLink(sKey, dKey)) and
-                                (not failedRouteGraph:HasLink(sKey, dKey)) and
+                                (not failedRouteGraph:HasLink(sKey, dKey) and not routeGraph:HasLink(sKey, dKey)) and
                                 (sPlayerID == localPlayer or cityTradingPostInfo[sKey])) then
 
                             -- update trader embark status, if not found earlier
                             if cityEmbarkInfo[sKey] == nil then
                                 cityEmbarkInfo[sKey] = TraderCanEmbarkInCity(sCity)
                             end
-                            if cityEmbarkInfo[dKey] == nil then
+                            if cityEmbarkInfo[dKey] == nil and dPlayerID ~= localPlayer then
                                 cityEmbarkInfo[dKey] = TraderCanEmbarkInCity(dCity)
                             end
 
                             -- setup the correct trade range
                             local tradeRange = TRADE_LAND_RANGE
-                            if traderCanEmbark and cityEmbarkInfo[sKey] and cityEmbarkInfo[dKey] then
+                            if traderCanEmbark and cityEmbarkInfo[sKey] and
+                                    (dPlayerID == localPlayer or cityEmbarkInfo[dKey]) then
                                 tradeRange = TRADE_LAND_RANGE + TRADE_WATER_RANGE
                             end
 
@@ -191,9 +192,8 @@ function BuildTotalGraph()
 
                                     -- add this route, if the source player was local, ie trading posts count
                                     elseif sPlayerID == localPlayer then
-                                        -- directional if destination player is not local
-                                        local directional = dPlayerID ~= localPlayer
-                                        routeGraph:AddConnection(sKey, dKey, pathLength, directional)
+                                        -- directional to avoid refuel issues
+                                        routeGraph:AddConnection(sKey, dKey, pathLength, true)
 
                                     -- else
                                         -- technically this route exists, but the source player is not local.
@@ -202,23 +202,21 @@ function BuildTotalGraph()
                                     end
                                 else
                                     -- if pathLength is <= 0, the route is gauranteed to fail. prevent checks between these in future
-                                    -- directional to avoid trading post issues with source player
+                                    -- directional to avoid trading post issues with source player, counting against destination player
                                     failedRouteGraph:AddConnection(sKey, dKey, cityDistance, true)
                                 end
                             end
                         end
-
-
                     end -- of nested loops between cities
                 end
             end
         end
     end
 
-    local time2 = Automation.GetTime()
-    print("took: " .. tostring(time2-time1))
-    print("\n\n~~~~~ CAN BASE TRADE ~~~~~\n" .. tostring(routeGraph) .. "\n========\n\n")
-    print("\n\n~~~~~ CANNOT TRADE ~~~~~\n" .. tostring(failedRouteGraph) .. "\n========\n\n")
+    local time2 = Automation.GetTime();
+    print("took: " .. tostring(time2-time1));
+    print("\n\n~~~~~ CAN BASE TRADE ~~~~~\n" .. tostring(routeGraph) .. "========\n.");
+    print("\n\n~~~~~ CANNOT TRADE ~~~~~\n" .. tostring(failedRouteGraph) .. "========\n.");
 
     return routeGraph, failedRouteGraph
 end
@@ -241,17 +239,22 @@ function AssertNonRefuelRoute(pathPlots)
     end
 
     -- if within land fuel, it is gauranteed to be non-refuel
-    if plotCount <= landFuel then
-        return true
-    end
+    -- if plotCount <= landFuel then
+    --     return true
+    -- end
+
+    local waterRoute:boolean = false
+    local plot = nil
 
     -- start from the plot after the start
     for i=2, plotCount do
-        local plotIndex = pathPlots[i]
-        local plot = Map.GetPlotByIndex(plotIndex)
+        plot = Map.GetPlotByIndex(pathPlots[i])
 
         if plot:IsWater() then
             waterFuel = waterFuel - 1
+            if not waterRoute then
+                waterRoute = true
+            end
         else
             landFuel = landFuel - 1
         end
@@ -260,6 +263,20 @@ function AssertNonRefuelRoute(pathPlots)
             return false
         end
     end
+
+    -- backtrack to see it does not use a launching point. Skip if destination is a local city
+    plot = Map.GetPlotByIndex(pathPlots[plotCount])
+    if waterRoute and plot:GetOwner() ~= Game.GetLocalPlayer() then
+        -- does not use launching point if 2nd, 3rd or 4th last plot was water
+        for i=1, 3 do
+            plot = Map.GetPlotByIndex(pathPlots[plotCount-i])
+            if plot:IsWater() then
+                return true
+            end
+        end
+    end
+
+    -- land/local non-refuel route
     return true
 end
 
@@ -360,10 +377,12 @@ function AssertGraph()
     local players:table = Game.GetPlayers{ Alive=true };
     local destinationCitiesID:table = {};
     local tradeManager:table = Game.GetTradeManager();
+    local safeFails = 0
+    local badFails = 0
 
     for _, sourceCity in sourceCities:Members() do
 
-        -- Update graph
+        -- Update graph, specifically for the source city
         local cityGraph = totalGraph:Clone()
         UpdateGraphForCity(cityGraph, sourceCity)
         local someRouteFailed = false
@@ -375,29 +394,34 @@ function AssertGraph()
             if CanPossiblyTradeWithPlayer(sourcePlayerID, destinationPlayerID) then
                 for _, destinationCity in destinationPlayer:GetCities():Members() do
                     local destinationCityID:number = destinationCity:GetID();
-                    local pathPlots = tradeManager:GetTradeRoutePath(sourcePlayerID, sourceCityID, destinationPlayerID, destinationCityID)
 
                     local sKey:string = string.format("%d.%d", sourcePlayerID, sourceCityID)
                     local dKey:string = string.format("%d.%d", destinationPlayerID, destinationCityID)
 
-                    local routeExists:boolean = table.count(pathPlots) > 4
-                    local gpathExists:boolean = cityGraph:PathExists(sKey, dKey) and not failedGraph:HasLink(sKey, dKey)
+                    local routeExists:boolean = tradeManager:CanStartRoute(sourcePlayerID, sourceCityID, destinationPlayerID, destinationCityID)
+                    local gpathExists:boolean = cityGraph:HasPath(sKey, dKey) and not failedGraph:HasLink(sKey, dKey)
 
-                    if routeExists ~= gpathExists then
+                    -- if the route exists, but we failed to find it in graph
+                    if routeExists and (not gpathExists) then
                         print("ASSERT FAILED: " .. sKey .. " " .. dKey)
                         print(routeExists, gpathExists)
-                        print("Path plots count = " .. table.count(pathPlots))
                         someRouteFailed = true
+                        badFails = badFails + 1
+                    elseif routeExists ~= gpathExists then
+                        print("Found non-existant path " .. cityGraph:GetPathString(sKey, dKey))
+                        safeFails = safeFails + 1
                     end
                 end
             end
         end
-
         if someRouteFailed then
             print("Graph for " .. L_Lookup(sourceCity:GetName()) .. "\n" .. tostring(cityGraph) .. "\n=====")
             print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
         end
     end
+
+    print("Total safe fails: " .. tostring(safeFails))
+    print("Total BAD fails: " .. tostring(badFails))
 end
 
 -- ===========================================================================

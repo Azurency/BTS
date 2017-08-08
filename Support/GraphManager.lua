@@ -134,7 +134,7 @@ local Node = {
     __tostring = function(self)
         local s = string.format(" [%s]", self.m_Key)
         for nodeKey, verticeValue in self:Vertices() do
-            s = s .. string.format(" --/-- %s(%s) ", nodeKey, verticeValue)
+            s = s .. string.format(" --/-- %s(%s)", nodeKey, verticeValue)
         end
         return s
     end
@@ -252,12 +252,14 @@ Graph = {
     end,
 
     ------------------------------------------------------------------
-    -- Uses BFS to check for path b/w nodeKey1, nodeKey2
+    -- Uses BFS to check for path b/w nodeKey1, nodeKey2.
+    -- Returns immediately it finds one.
     -- Path with itself exists, if there is a vertex with itself
     ------------------------------------------------------------------
-    PathExists = function(self, startKey, endKey)
+    GetPath = function(self, startKey, endKey)
         local startNode = self.m_Nodes[startKey]
         local endNode = self.m_Nodes[endKey]
+        local path = {}
 
         if startNode ~= nil and endNode ~= nil then
             -- Node States
@@ -282,8 +284,9 @@ Graph = {
                     for nodeKey2, verticeValue in n1:Vertices() do
                         local n2 = self.m_Nodes[nodeKey2]
                         if nodeStates[n2.m_Key] == NODE_UNDISCOVERED then
+                            path[n2.m_Key] = n1.m_Key
                             if endNode.m_Key == n2.m_Key then
-                                return true
+                                return path
                             end
                             nodeStates[n2.m_Key] = NODE_VISITED
                             nodeq:enqueue(n2.m_Key)
@@ -293,7 +296,36 @@ Graph = {
                 end
             end
         end
-        return false
+        return nil
+    end,
+
+    ------------------------------------------------------------------
+    ------------------------------------------------------------------
+    HasPath = function(self, startKey, endKey)
+        return self:GetPath(startKey, endKey) ~= nil
+    end,
+
+    ------------------------------------------------------------------
+    ------------------------------------------------------------------
+    GetPathString = function(self, startKey, endKey)
+        local path = self:GetPath(startKey, endKey)
+        if path ~= nil then
+            return self:PathToString(startKey, endKey, path)
+        else
+            return "NO PATH"
+        end
+    end,
+
+    ------------------------------------------------------------------
+    ------------------------------------------------------------------
+    PathToString = function(self, startKey, endKey, path)
+        if startKey == endKey then
+            return string.format("[%s]", startKey)
+        elseif path[endKey] == nil then
+            return "[?]"
+        end
+
+        return self:PathToString(startKey, path[endKey], path) .. string.format("-[%s]", endKey)
     end,
 
     ------------------------------------------------------------------
@@ -366,10 +398,5 @@ g:AddLink("n4", "n2", 1, true)
 g:AddLink("n2", "n5", 1, true)
 g:AddLink("n1", "n4", 1, true)
 g:AddLink("n1", "n2", 1, true)
-
-local g2 = g:Clone()
-g:RemoveNode("n1")
-g2:RemoveNode("n6")
-g:Print()
-g2:Print()
+print(g:GetPathString("n1", "n6"))
 ]]
