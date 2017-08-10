@@ -29,7 +29,7 @@ local Queue = {
     ------------------------------------------------------------------
     ------------------------------------------------------------------
     dequeue = function(self)
-        if self.m_Front > self.m_Back then
+        if self:isEmpty() then
             return nil
         end
         local val = self.m_Values[self.m_Front]
@@ -69,58 +69,69 @@ local Node = {
         self.__index = self
 
         -- Member variables
-        o.m_Vertices = {}
-        o.m_VerticeCount = 0
-        o.m_Key = key
+        o.m_Adjacencies = {}        -- all adjacent nodes
+        o.m_AdjacencyCount = 0      -- adjacent nodes
+        o.m_Key = key               -- key used to reference this node
 
         return o
     end,
 
     ------------------------------------------------------------------
     ------------------------------------------------------------------
-    AddVertex = function(self, nodeKey, vertexValue)
+    GetKey = function(self)
+        return self.m_Key
+    end,
+
+    ------------------------------------------------------------------
+    ------------------------------------------------------------------
+    AddAdjacent = function(self, nodeKey, vertexValue)
         -- default vertexValue to 1
         if vertexValue == nil then
           vertexValue = 1
         end
-        self.m_Vertices[nodeKey] = vertexValue
-        self.m_VerticeCount = self.m_VerticeCount + 1
+        self.m_Adjacencies[nodeKey] = vertexValue
+        self.m_AdjacencyCount = self.m_AdjacencyCount + 1
+    end,
+    ------------------------------------------------------------------
+    ------------------------------------------------------------------
+    GetAdjacencyTo = function(self, nodeKey)
+        return self.m_Adjacencies[nodeKey]
     end,
 
     ------------------------------------------------------------------
     ------------------------------------------------------------------
-    HasVertex = function(self, nodeKey)
-        return self.m_Vertices[nodeKey] ~= nil
+    IsAdjacent = function(self, nodeKey)
+        return self:GetAdjacencyTo(nodeKey) ~= nil
     end,
 
     ------------------------------------------------------------------
     ------------------------------------------------------------------
-    RemoveVertex = function(self, nodeKey)
-        self.m_Vertices[nodeKey] = nil
-        self.m_VerticeCount = self.m_VerticeCount - 1
+    RemoveAdjacency = function(self, nodeKey)
+        self.m_Adjacencies[nodeKey] = nil
+        self.m_AdjacencyCount = self.m_AdjacencyCount - 1
     end,
 
     ------------------------------------------------------------------
     ------------------------------------------------------------------
-    ClearVertices = function(self)
-        for nodeKey, verticeValue in self:Vertices() do
-            self:RemoveVertex(nodeKey)
+    ClearAdjacency = function(self)
+        for nodeKey, vertexValue in self:Adjacencies() do
+            self:RemoveAdjacency(nodeKey)
         end
     end,
 
     ------------------------------------------------------------------
     -- Iterator
     ------------------------------------------------------------------
-    Vertices = function(self)
-        return pairs(self.m_Vertices)
+    Adjacencies = function(self)
+        return pairs(self.m_Adjacencies)
     end,
 
     ------------------------------------------------------------------
     ------------------------------------------------------------------
     __eq = function(o1, o2)
-        if o1.m_VerticeCount == o2.m_VerticeCount then
-            for n1, _ in o1:Vertices() do
-                if not o2:HasVertex(n1) then
+        if o1.m_AdjacencyCount == o2.m_AdjacencyCount then
+            for n1, _ in o1:Adjacencies() do
+                if not o2:IsAdjacent(n1) then
                     return false
                 end
             end
@@ -132,9 +143,9 @@ local Node = {
     ------------------------------------------------------------------
     ------------------------------------------------------------------
     __tostring = function(self)
-        local s = string.format(" [%s]", self.m_Key)
-        for nodeKey, verticeValue in self:Vertices() do
-            s = s .. string.format(" --/-- %s(%s)", nodeKey, verticeValue)
+        local s = string.format(" [%s]", self:GetKey())
+        for nodeKey, vertexValue in self:Adjacencies() do
+            s = s .. string.format(" -/- %s(%s)", nodeKey, vertexValue)
         end
         return s
     end
@@ -156,29 +167,15 @@ Graph = {
     end,
 
     ------------------------------------------------------------------
+    -- NODES
     ------------------------------------------------------------------
     AddNode = function(self, nodeKey)
-        if self.m_Nodes[nodeKey] == nil then
-            local newNode = Node:new(nodeKey)
-            self.m_Nodes[nodeKey] = newNode
+        if not self:HasNode(nodeKey) then
+            self.m_Nodes[nodeKey] = Node:new(nodeKey)
             self.m_NodeCount = self.m_NodeCount + 1
             return true
         end
         return false
-    end,
-
-    ------------------------------------------------------------------
-    -- Creates nodes, if they don't exist
-    -- Adds link between them. AddLink on existing link, just updates it
-    ------------------------------------------------------------------
-    AddConnection = function(self, nodeKey1, nodeKey2, linkValue, directional)
-        if not self:HasNode(nodeKey1) then
-            self:AddNode(nodeKey1)
-        end
-        if not self:HasNode(nodeKey2) then
-            self:AddNode(nodeKey2)
-        end
-        self:AddLink(nodeKey1, nodeKey2, linkValue, directional)
     end,
 
     ------------------------------------------------------------------
@@ -195,11 +192,22 @@ Graph = {
 
     ------------------------------------------------------------------
     ------------------------------------------------------------------
-    AddLink = function(self, nodeKey1, nodeKey2, linkValue, directional)
+    RemoveNode = function(self, nodeKey)
+        self.m_Nodes[nodeKey] = nil
+        self.m_NodeCount = self.m_NodeCount - 1
+
+        -- Cleanup vertices
+        self:RemoveAllVerticesToNode(nodeKey)
+    end,
+
+    ------------------------------------------------------------------
+    -- VERTICES
+    ------------------------------------------------------------------
+    AddVertex = function(self, nodeKey1, nodeKey2, vertexWeight, directional)
         if self.m_Nodes[nodeKey1] ~= nil and self.m_Nodes[nodeKey2] ~= nil then
-            self.m_Nodes[nodeKey1]:AddVertex(nodeKey2, linkValue)
+            self.m_Nodes[nodeKey1]:AddAdjacent(nodeKey2, vertexWeight)
             if not directional then
-                self.m_Nodes[nodeKey2]:AddVertex(nodeKey1, linkValue)
+                self.m_Nodes[nodeKey2]:AddAdjacent(nodeKey1, vertexWeight)
             end
             return true
         end
@@ -208,40 +216,60 @@ Graph = {
 
     ------------------------------------------------------------------
     ------------------------------------------------------------------
-    HasLink = function(self, nodeKey1, nodeKey2)
+    HasVertex = function(self, nodeKey1, nodeKey2)
         if self.m_Nodes[nodeKey1] ~= nil and self.m_Nodes[nodeKey2] ~= nil then
-            return self.m_Nodes[nodeKey1]:HasVertex(nodeKey2)
+            return self.m_Nodes[nodeKey1]:IsAdjacent(nodeKey2)
         end
+    end,
+
+    ------------------------------------------------------------------
+    ------------------------------------------------------------------
+    GetVertex = function(self, nodeKey1, nodeKey2)
+        if self.m_Nodes[nodeKey1] ~= nil and self.m_Nodes[nodeKey2] ~= nil then
+            return self.m_Nodes[nodeKey1]:GetVertex(nodeKey2)
+        end
+    end,
+
+    ------------------------------------------------------------------
+    ------------------------------------------------------------------
+    RemoveVertex = function(self, nodeKey1, nodeKey2)
+        if self.m_Nodes[nodeKey1] ~= nil and self.m_Nodes[nodeKey2] ~= nil then
+            self.m_Nodes[nodeKey1]:RemoveAdjacency(nodeKey2)
+        end
+    end,
+
+    ------------------------------------------------------------------
+    -- Creates nodes, if they don't exist
+    -- Adds link between them. AddVertex on existing link, just updates it
+    ------------------------------------------------------------------
+    CreateAndLink = function(self, nodeKey1, nodeKey2, linkValue, directional)
+        if not self:HasNode(nodeKey1) then
+            self:AddNode(nodeKey1)
+        end
+        if not self:HasNode(nodeKey2) then
+            self:AddNode(nodeKey2)
+        end
+        self:AddVertex(nodeKey1, nodeKey2, linkValue, directional)
     end,
 
     ------------------------------------------------------------------
     -- removes all links emanating from this node
     ------------------------------------------------------------------
-    RemoveAllLinksFromNode = function(self, nodekey)
+    RemoveAllVerticesFromNode = function(self, nodekey)
         if self.m_Nodes[nodekey] ~= nil then
-            self.m_Nodes[nodekey]:ClearVertices()
+            self.m_Nodes[nodekey]:ClearAdjacency()
         end
     end,
 
     ------------------------------------------------------------------
     -- removes all links going to this node
     ------------------------------------------------------------------
-    RemoveAllLinksToNode = function(self, nodekey)
+    RemoveAllVerticesToNode = function(self, nodekey)
         for key, node in self:Nodes() do
-            if node:HasVertex(nodekey) then
-                node:RemoveVertex(nodekey)
+            if node:IsAdjacent(nodekey) then
+                node:RemoveAdjacency(nodekey)
             end
         end
-    end,
-
-    ------------------------------------------------------------------
-    ------------------------------------------------------------------
-    RemoveNode = function(self, nodeKey)
-        self.m_Nodes[nodeKey] = nil
-        self.m_NodeCount = self.m_NodeCount - 1
-
-        -- Cleanup links
-        self:RemoveAllLinksToNode(nodeKey)
     end,
 
     ------------------------------------------------------------------
@@ -257,11 +285,9 @@ Graph = {
     -- Path with itself exists, if there is a vertex with itself
     ------------------------------------------------------------------
     GetPath = function(self, startKey, endKey)
-        local startNode = self.m_Nodes[startKey]
-        local endNode = self.m_Nodes[endKey]
         local path = {}
 
-        if startNode ~= nil and endNode ~= nil then
+        if self:HasNode(startKey) and self:HasNode(endKey) then
             -- Node States
             local nodeStates = {}
             local NODE_UNDISCOVERED = 0
@@ -274,35 +300,31 @@ Graph = {
             end
 
             nodeq = Queue:new()
-            nodeStates[startNode.m_Key] = NODE_VISITED
-            nodeq:enqueue(startNode.m_Key)
+            nodeStates[startKey] = NODE_VISITED
+            nodeq:enqueue(startKey)
 
             -- go through unfinished nodes, till queue is empty
             for nodeKey1 in nodeq:empty() do
                 if nodeStates[nodeKey1] ~= NODE_FINISHED then
                     local n1 = self.m_Nodes[nodeKey1]
-                    for nodeKey2, verticeValue in n1:Vertices() do
+                    for nodeKey2, vertexValue in n1:Adjacencies() do
                         local n2 = self.m_Nodes[nodeKey2]
-                        if nodeStates[n2.m_Key] == NODE_UNDISCOVERED then
-                            path[n2.m_Key] = n1.m_Key
-                            if endNode.m_Key == n2.m_Key then
+                        if nodeStates[nodeKey2] == NODE_UNDISCOVERED then
+                            path[nodeKey2] = nodeKey1
+                            if endKey == nodeKey2 then
                                 return path
                             end
-                            nodeStates[n2.m_Key] = NODE_VISITED
-                            nodeq:enqueue(n2.m_Key)
+                            nodeStates[nodeKey2] = NODE_VISITED
+                            nodeq:enqueue(nodeKey2)
                         end
                     end
                     nodeStates[nodeKey1] = NODE_FINISHED
                 end
             end
         end
-        return nil
-    end,
 
-    ------------------------------------------------------------------
-    ------------------------------------------------------------------
-    HasPath = function(self, startKey, endKey)
-        return self:GetPath(startKey, endKey) ~= nil
+        -- endKey not found from startKey
+        return nil
     end,
 
     ------------------------------------------------------------------
@@ -314,6 +336,12 @@ Graph = {
         else
             return "NO PATH"
         end
+    end,
+
+    ------------------------------------------------------------------
+    ------------------------------------------------------------------
+    HasPath = function(self, startKey, endKey)
+        return self:GetPath(startKey, endKey) ~= nil
     end,
 
     ------------------------------------------------------------------
@@ -339,8 +367,8 @@ Graph = {
     Clone = function(self)
         local cloneGraph = Graph:new()
         for key, node in self:Nodes() do
-            for vKey, vVal in node:Vertices() do
-                cloneGraph:AddConnection(key, vKey, vVal, true)
+            for vKey, vVal in node:Adjacencies() do
+                cloneGraph:CreateAndLink(key, vKey, vVal, true)
             end
         end
         return cloneGraph
@@ -373,30 +401,29 @@ Graph = {
 
 --[[
 local n1 = Node:new("n1")
-n1:AddVertex("n2")
-n1:AddVertex("n3")
-n1:AddVertex("n4")
+n1:AddAdjacent("n2")
+n1:AddAdjacent("n3")
+n1:AddAdjacent("n4")
 
 n2 = Node:new("n1")
-n2:AddVertex("n2")
-n2:AddVertex("n3")
-n2:AddVertex("n4")
+n2:AddAdjacent("n2")
+n2:AddAdjacent("n3")
+n2:AddAdjacent("n4")
 print(n1 == n2)
 
 local g = Graph:new()
-g:AddNode("n1")
-g:AddNode("n2")
-g:AddNode("n3")
-g:AddNode("n4")
-g:AddNode("n5")
-g:AddNode("n6")
-g:AddLink("n3", "n6", 1, true)
-g:AddLink("n3", "n5", 1, true)
-g:AddLink("n6", "n6", 1, true)
-g:AddLink("n5", "n4", 1, true)
-g:AddLink("n4", "n2", 1, true)
-g:AddLink("n2", "n5", 1, true)
-g:AddLink("n1", "n4", 1, true)
-g:AddLink("n1", "n2", 1, true)
-print(g:GetPathString("n1", "n6"))
+g:CreateAndLink("n3", "n6", 1, true)
+g:CreateAndLink("n3", "n5", 1, true)
+g:CreateAndLink("n6", "n6", 1, true)
+g:CreateAndLink("n5", "n4", 1, true)
+g:CreateAndLink("n4", "n2", 1, true)
+g:CreateAndLink("n2", "n5", 1, true)
+g:CreateAndLink("n1", "n4", 1, true)
+g:CreateAndLink("n1", "n2", 1, true)
+print(g:GetPathString("n3", "n2"))
+
+local gN = g:Clone()
+gN:RemoveVertex("n4", "n2")
+print(gN:GetPathString("n3", "n2"))
+print(g:GetPathString("n3", "n2"))
 ]]

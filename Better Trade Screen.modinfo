@@ -16,6 +16,7 @@
       </Properties>
       <Items>
         <File>Support/GraphManager.lua</File>
+        <File>Support/RouteGraphSupport.lua</File>
       </Items>
     </ImportFiles>
 
@@ -76,6 +77,7 @@
     <File>UI/Choosers/TradeOriginChooser.xml</File>
     <File>UI/Choosers/TradeOriginChooser.lua</File>
     <File>Support/GraphManager.lua</File>
+    <File>Support/RouteGraphSupport.lua</File>
     <File>Text/BTS_Text_DE.xml</File>
     <File>Text/BTS_Text_EN.xml</File>
     <File>Text/BTS_Text_ES.xml</File>
